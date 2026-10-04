@@ -457,7 +457,7 @@ tbody tr:hover td{background:rgba(255,255,255,.015);}
 </div>
 
 <!-- FINOS FDC3 3.0 Desktop Agent (built from fdc3-agent/ on @finos/fdc3-web-impl) -->
-<script src="./fdc3-agent.js?v=11"></script>
+<script src="./fdc3-agent.js?v=20"></script>
 <script type="module">
 import { validatePaymentContext, toSettlementStatusContext, STATUS } from './payment-lifecycle.mjs';
 
@@ -615,7 +615,8 @@ window.addEventListener('message', (evt) => {
         txSignature: d.txSignature,
         explorerUrl: d.explorerUrl,
         slot: d.slot,
-        alcoveVerified: d.alcoveVerified
+        alcoveVerified: d.alcoveVerified,
+        reason: d.reason
       });
     }
   }
@@ -639,7 +640,8 @@ setInterval(async () => {
           txSignature: data.txSignature,
           explorerUrl: data.explorerUrl,
           slot: data.slot,
-          alcoveVerified: data.alcoveVerified
+          alcoveVerified: data.alcoveVerified,
+          reason: data.reason
         });
       }
     }
@@ -648,7 +650,7 @@ setInterval(async () => {
   }
 }, 500);
 
-function applySettlementStatus({ uetr, status, txSignature, explorerUrl, slot, alcoveVerified }) {
+function applySettlementStatus({ uetr, status, txSignature, explorerUrl, slot, alcoveVerified, reason }) {
   let matched = false;
   trades.forEach(t => {
     if (t.uetr !== uetr) return;
@@ -666,6 +668,10 @@ function applySettlementStatus({ uetr, status, txSignature, explorerUrl, slot, a
     }
     if (slot) t.slot = slot;
     if (alcoveVerified === true) t.alcoveVerified = true;
+    if (t.status === 'REJECTED') {
+      // Desk-side rejections carry their reason verbatim; keep the newest.
+      t.rjctReason = reason || t.rjctReason || '';
+    }
     matched = true;
   });
   if (matched) {
@@ -691,7 +697,16 @@ function applySettlementStatus({ uetr, status, txSignature, explorerUrl, slot, a
       const settled = trades.find((x) => x.uetr === uetr && x.status === 'SETTLED');
       if (settled) showReceiptModal(settled);
     } else if (status === STATUS.REJECTED || status === 'Rjct') {
-      log('e', `[FDC3 FR-01606] synaptic.settlementStatus Rjct received · UETR: ${uetr.slice(0,16)}…`);
+      // FR-01607 release: a rejection is terminal for that dispatch — the UETR
+      // must be re-dispatchable or a failed leg blocks the trade forever
+      // (2026-10-04 live repro: rows stuck SETTLING/REJECTED with no settle
+      // button). Rejections render as rejections, WITH their reason.
+      dispatchedUetrs.delete(uetr);
+      const rejTrade = trades.find(t => t.uetr === uetr);
+      if (rejTrade) renderBlotter();
+      log('e', `[FDC3 FR-01606] settlementStatus Rjct · UETR: ${uetr.slice(0,16)}… · ${reason || 'reason not provided by desk'}`);
+      if (rejTrade) toast(`✕ Settlement rejected — ${rejTrade.pair} ${rejTrade.amount.toLocaleString()} · ${reason || 'see FDC3 log'}`);
+      hideIntentModal();
     }
   }
 }
@@ -795,7 +810,10 @@ window.execTrade = () => {
 // directory miss) so the Alcove ADR-555 adapter screens and routes it.
 window.settleTrade = async (id, mode) => {
   const t = trades.find(x => x.id === id);
-  if (!t || t.status !== 'EXECUTED') return;
+  // (2026-10-04 fix) REJECTED rows are re-dispatchable: a rejection is terminal
+  // for THAT dispatch attempt, not for the trade — the desk-side Rjct release
+  // (FR-01607) already un-blocked the UETR by the time this runs.
+  if (!t || (t.status !== 'EXECUTED' && t.status !== 'REJECTED')) return;
   const targetAppId = mode === 'enclave' ? 'bankerx-clearing-desk-geneva' : 'bankerx-clearing-desk';
 
   // FR-01607: duplicate-dispatch guard
@@ -875,7 +893,18 @@ window.settleTrade = async (id, mode) => {
       }
       return;
     } catch (err) {
-      hideIntentModal();
+      // (2026-10-04 fix) Do NOT hide the intent modal here: hiding it made the
+      // window look like the payment self-closed while the legacy channels
+      // (postMessage + relay bus) were still carrying the intent. Tell the
+      // operator what actually happened and keep the modal open.
+      const im = document.getElementById('intentModal');
+      if (im.classList.contains('open')) {
+        document.getElementById('imScreen').innerHTML =
+          `<span class="mv-warn">DA RAISE FAILED — LEGACY DISPATCH (postMessage + relay bus)</span>`;
+        document.getElementById('imState').innerHTML =
+          `<span class="mv-warn">AGENT RAISE FAILED — LEGACY DISPATCH ACTIVE</span>`;
+        document.getElementById('imState').className = 'v mv-warn';
+      }
       log('w', `[FDC3] Agent raiseIntent failed (${err.message ?? err}) — legacy dispatch channels engaged`);
     }
   }
@@ -1004,15 +1033,16 @@ function renderBlotter() {
     let stClass='st-exec', stLabel='EXECUTED';
     if (t.status==='SETTLING')  { stClass='st-tling'; stLabel='SETTLING…'; }
     if (t.status==='SETTLED')   { stClass='st-done';  stLabel='ACSC ✓'; }
-    if (t.status==='REJECTED')  { stClass='st-rjct';  stLabel='RJCT'; }
+    if (t.status==='REJECTED')  { stClass='st-rjct';  stLabel='RJCT · RETRY OK'; }
 
     let action = '';
-    if (t.status === 'EXECUTED' && receiverAvailable) {
-      action = `<button class="settle-btn" onclick="settleTrade(${t.id})">SETTLE (BANKERX)</button>` +
+    if ((t.status === 'EXECUTED' || t.status === 'REJECTED') && receiverAvailable) {
+      action =
+        `<button class="settle-btn" onclick="settleTrade(${t.id})"${t.status==='REJECTED'?' style="border-color:rgba(240,180,41,.45);color:var(--amber);"':''}>SETTLE (BANKERX)</button>` +
         `<button class="settle-btn" style="margin-left:4px;border-color:rgba(240,180,41,.45);color:var(--amber);background:rgba(240,180,41,.08)" ` +
         `title="Directory-miss path: raise targeted at a desk NOT in the App Directory — the Alcove ADR-555 enclave screens it, the rendezvous lane routes it to a real partition desk, and the desk re-verifies the enclave attestation before settling" ` +
         `onclick="settleTrade(${t.id},'enclave')">SETTLE (ENCLAVE)</button>`;
-    } else if (t.status === 'EXECUTED' && !receiverAvailable) {
+    } else if ((t.status === 'EXECUTED' || t.status === 'REJECTED') && !receiverAvailable) {
       action = `<span style="font-size:7px;color:var(--txt3);letter-spacing:.5px">LAUNCH BANKERX →</span>`;
     } else if (t.status === 'SETTLING') {
       action = `<span style="font-size:7px;color:var(--amber);letter-spacing:.5px">DISPATCHING…</span>`;
@@ -1031,7 +1061,7 @@ function renderBlotter() {
       <td style="text-align:right;font-weight:700;font-size:10px">${t.amount.toLocaleString()}</td>
       <td style="color:var(--txt2)">${t.rate.toFixed(dp)}</td>
       <td style="color:var(--txt3);font-size:8px;letter-spacing:.3px">${t.uetr}</td>
-      <td><span class="st ${stClass}">${stLabel}</span></td>
+      <td><span class="st ${stClass}"${t.status==='REJECTED'&&t.rjctReason?` title="Rejected: ${String(t.rjctReason).replace(/"/g,'&quot;')} — re-dispatch available"`:''}>${stLabel}</span></td>
       <td>${action}</td>
     </tr>`;
   }).join('');
