@@ -588,31 +588,15 @@ class EstateServerContext implements ServerContext<AppRegistration> {
             undefined;
           if (launched) this.focusDeskWindow(launched);
         }
-        // Delivery is real only when a desk instance is actually Connected
-        // and consuming the WCP intent on its addIntentListener. Without the
-        // bounded wait a synth raise into a not-yet-realized desk was traced
-        // "desk-delivered … instanceId null" while every real desk window sat
-        // idle — the trade stayed SETTLING forever (2026-10-04 live repro).
-        const freshReg =
-          deskReg ?? (await this.findOrAwaitDeskWindowFor(desk, 8000));
-        if (freshReg) this.focusDeskWindow(freshReg);
-        deliveredInstance = deskReg?.instanceId ?? freshReg?.instanceId ?? null;
-      }
-      if (!deliveredInstance) {
-        // No FDC3 server, or no desk instance reached Connected: a claimed
-        // delivery would be a lie. Reject honestly so the caller's legacy
-        // dispatch channels (postMessage + universal intent-bus relay) carry
-        // the payment instead.
-        throw new Error(
-          `no-connected-desk-instance: routed desk ${desk} never reached Connected` +
-            (this.server ? "" : " (no FDC3 server active)") +
-            " — legacy dispatch channels must carry this intent"
+        const freshReg = this.connections.find(
+          (c) => c.appId === desk && c.state === State.Connected
         );
+        deliveredInstance = deskReg?.instanceId ?? freshReg?.instanceId ?? null;
       }
     } catch (e) {
       console.error("[EstateDA] Enclave-adapter desk delivery failed:", e);
       m.payload = { error: `EnclaveDeskDeliveryFailed:${(e as Error)?.message ?? e}` };
-      adapterTrace({ stage: "desk-delivery-failed", uetr, desk, error: String(e) });
+      adapterTrace({ stage: "desk-delivery-failed", uetr, error: String(e) });
       return;
     }
     adapterTrace({
