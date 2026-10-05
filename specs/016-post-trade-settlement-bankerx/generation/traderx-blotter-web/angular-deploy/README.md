@@ -13,7 +13,7 @@ built from `templates/web-front-end/angular/` — see `PATCH-NOTE.md` for the
 | `conf.angular.html` | `conf.html` | 25da0a4bbf0ddbc18b341ca82c722676 (unchanged) | 25da0a4bbf0ddbc18b341ca82c722676 (unchanged) |
 | (app bundle) | `main-FDMPPVWA.js?v=20` | ca10adb401a324240e3d618822fccc88 | (v19 `main-7E7PBSO6.js` `add329e9…` retired same day) |
 | (app index + glue tags, agent ref `?v=20`) | `index.html` | 76e6662e1cd5957ac5121bbf89effd15 (deployed 2026-10-05) | 5143aad4ba93282c0a3bfba4e26ee6ab (bundle ref `?v=20`, pre-agent-bump) |
-| (root estate index, agent ref `?v=12`, deployed-variant record incl. `bankerxAgentOwned` desk-reuse guard) | `/index.html` | b2e50f92f28236661f864a2496182848 | 35c80fd57daf96a14127e3c652b99071 |
+| (root estate index, agent ref `?v=12`, deployed-variant record incl. `bankerxAgentOwned` desk-reuse guard + no-tab settle path) | `/index.html` | 5144d7bd861fcf6e73c9a20801a8e68d | 35c80fd57daf96a14127e3c652b99071 |
 
 
 v20 (2026-10-01, commit `b5cc268`): durable settlement ledger — the adapter

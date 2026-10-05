@@ -795,23 +795,23 @@ window.settleTrade = async (id, mode) => {
     return;
   }
 
-  // If window not tracked, try to open/focus or fallback gracefully to relay
+  // Desk window reuse (2026-10-01, operator directive): ask the DA for the
+  // BankerX window it is tracking. The launch button transfers window
+  // ownership to the agent (bankerxWin = null in launchBankerX), so when a
+  // desk is open this returns the real WindowProxy the settle path focuses.
+  // No tab pre-open (2026-10-05 operator ruling): the settlement raise below
+  // targets the desk through the FDC3 Desktop Agent, which cold-launches the
+  // desk as the wired popup window when it is not yet connected — the tab
+  // fallback was an unwired duplicate surface and is gone.
   if (!bankerxWin || bankerxWin.closed) {
-    // Desk-reuse (2026-10-01, operator directive): ask the DA for the BankerX
-    // window it is tracking BEFORE blind-opening a new tab. The launch button
-    // transfers window ownership to the agent (bankerxWin = null in
-    // launchBankerX), so when a desk is open this returns the real WindowProxy
-    // and the settle path focuses it — the legacy window.open below only runs
-    // when the agent is absent or no desk window exists.
     try {
       const agentWin = await window.SynapticFDC3Agent?.getWindow?.();
       if (agentWin && !agentWin.closed) bankerxWin = agentWin;
     } catch (e) {}
-    if (!bankerxWin || bankerxWin.closed) {
-      try {
-        bankerxWin = window.open(BANKERX_ORIGIN, 'bankerx_clearing_desk');
-      } catch (e) {}
-    }
+    log(bankerxWin && !bankerxWin.closed ? 'i' : 's',
+      bankerxWin && !bankerxWin.closed
+        ? '[FDC3] Reusing the agent-tracked desk window — no new surface opened'
+        : '[FDC3] No desk window yet — the settle raise cold-launches the desk window (wired surface, no tab)');
   }
 
   // Build canonical fdc3.payment context (FINOS PR #2204 name) per Spec 016 FR-01603 with verified Token-2022 accounts
