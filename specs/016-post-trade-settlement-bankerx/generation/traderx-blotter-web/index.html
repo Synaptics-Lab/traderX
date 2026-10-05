@@ -822,8 +822,14 @@ window.settleTrade = async (id, mode) => {
     currency: t.pair.split('/')[0],
     pair: t.pair,
     rate: t.rate,
-    debtor:   { name: t.debtor,   account: '4cghWNxgU73yh1SuRK1juQzt8EaKtC8HWGq2yK4jLmeG' },
-    creditor: { name: t.creditor, account: 'BnuCTFWFLLXnSPv2Frs42royiTAYG87WP7p1zRLB4ksG' },
+    // Party accounts = REAL key-backed syn1 identities from the live desk
+    // registry (/api/identity/desks, sha3-256(pub)[12..32]) — the desk's
+    // resolveInboundAccount passes checksum-valid syn1 straight through.
+    // 2026-10-05 sweep: the legacy Solana ATA constants (closed 4cghWNxg…
+    // debtor from before the F-10A rotation) are out of the wire path; rail
+    // accounts live in synaptic-fx-terminal/lib/solana/token2022-config.ts.
+    debtor:   { name: t.debtor,   account: 'syn13ln3veevxe99jgdfk6tzfjefazpp35pjty723g' },
+    creditor: { name: t.creditor, account: 'syn1a4jwmg9ecv6uey2j9s23tzpx807ynshs22m9kf' },
     networkRouting: {
       rail: 'Trilateral Powerhouse',
       channel: 'global',
