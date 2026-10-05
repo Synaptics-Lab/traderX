@@ -744,6 +744,49 @@ async function checkOnChainSettlement() {
 }
 setInterval(checkOnChainSettlement, 2500);
 
+// ─── Dispatch Timeout Sweep (gap #1, 2026-10-05) ──────────────────────────
+// The restored pre-revert flow strands a row in "SETTLING… | DISPATCHING…"
+// FOREVER when an intent dispatch fails or lands nowhere — no terminal
+// status, no retry handle (operator gap-log #1). Honest terminal states
+// only: a dispatch that has not confirmed within DISPATCH_TIMEOUT_MS is
+// rendered as RJCT with the real reason, and the duplicate-dispatch guard
+// releases the UETR so a re-dispatch handle becomes available. A LATE real
+// settlement still overrides the timeout label — applySettlementStatus and
+// the on-chain watcher both accept Acsc for this UETR as before (money
+// truth beats a timeout label; never the reverse). No hold-card: the
+// timeout REJECTS outright at 120s, per the operator ruling.
+const DISPATCH_TIMEOUT_MS = 120000;
+setInterval(() => {
+  let changed = false;
+  for (const t of trades) {
+    if (t.status !== 'SETTLING' || !t.dispatchedAt) continue;
+    if (Date.now() - t.dispatchedAt < DISPATCH_TIMEOUT_MS) continue;
+    t.status = 'REJECTED';
+    t.reason = 'dispatch timeout (120s) — intent never reached a desk';
+    t.dispatchedAt = null;
+    dispatchedUetrs.delete(t.uetr);
+    log('e', `[DISPATCH STRANDED → RJCT] UETR: ${t.uetr.slice(0,16)}… — ${t.reason}; re-dispatch is available`);
+    log('w', `[FR-01607] UETR ${t.uetr.slice(0,16)}… released from the duplicate-dispatch guard (timeout)`);
+    changed = true;
+  }
+  if (changed) renderBlotter();
+}, 2500);
+
+// Re-dispatch handle (gap #1): a timed-out row is RJCT but recoverable —
+// rewind it to EXECUTED and re-run the normal settle raise (which re-arms
+// the duplicate-dispatch guard and re-stamps the dispatch clock). The raise
+// goes through the SAME settleTrade path; if the original intent actually
+// landed late, the desk's UETR dedup and the settle-gate claim refuse the
+// duplicate exactly as before.
+window.redispatchTrade = (id) => {
+  const t = trades.find(x => x.id === id);
+  if (!t || t.status !== 'REJECTED') return;
+  t.status = 'EXECUTED';
+  t.reason = null;
+  log('x', `[GAP-1 RE-DISPATCH] Re-raising StartPayment for UETR: ${t.uetr.slice(0,16)}…`);
+  settleTrade(id, t.enclaveDispatched ? 'enclave' : undefined);
+};
+
 // ─── Execute Trade ─────────────────────────────────────────────────────────
 window.execTrade = () => {
   const raw = document.getElementById('selPair').value;
@@ -848,6 +891,10 @@ window.settleTrade = async (id, mode) => {
   // Dispatch
   t.status = 'SETTLING';
   t.enclaveDispatched = mode === 'enclave';
+  // GAP-1 (2026-10-05): stamp the dispatch so the timeout sweep below can
+  // honestly terminate a dispatch that never landed at a desk.
+  t.dispatchedAt = Date.now();
+  t.reason = null;
   dispatchedUetrs.add(t.uetr);
   renderBlotter();
 
@@ -1032,7 +1079,12 @@ function renderBlotter() {
         ? `<a href="${t.explorerUrl}" target="_blank" rel="noopener noreferrer" style="color:var(--green);font-size:7px;font-weight:700;letter-spacing:.5px;text-decoration:underline;">SOLANA TX ↗</a>`
         : `<span style="font-size:7px;color:var(--green);letter-spacing:.5px">ON-CHAIN ✓</span>`;
     } else {
-      action = `<span style="font-size:7px;color:var(--red);letter-spacing:.5px">RJCT</span>`;
+      // GAP-1: a timed-out dispatch is RJCT with the real reason and a
+      // re-dispatch handle; other rejections (desk Rjct payloads) render
+      // as plain rejections with no retry affordance.
+      action = t.reason && t.reason.indexOf('dispatch timeout') === 0
+        ? `<button class="settle-btn" onclick="redispatchTrade(${t.id})" title="${t.reason} — re-raise StartPayment for this UETR">RE-DISPATCH →</button>`
+        : `<span style="font-size:7px;color:var(--red);letter-spacing:.5px">RJCT</span>`;
     }
 
     return `<tr id="tr-${t.id}" class="${t.status==='SETTLED'?'flash-row':''}">
@@ -1042,7 +1094,7 @@ function renderBlotter() {
       <td style="text-align:right;font-weight:700;font-size:10px">${t.amount.toLocaleString()}</td>
       <td style="color:var(--txt2)">${t.rate.toFixed(dp)}</td>
       <td style="color:var(--txt3);font-size:8px;letter-spacing:.3px">${t.uetr}</td>
-      <td><span class="st ${stClass}">${stLabel}</span></td>
+      <td><span class="st ${stClass}" ${t.reason ? `title="${t.reason}"` : ''}>${stLabel}</span></td>
       <td>${action}</td>
     </tr>`;
   }).join('');
