@@ -457,19 +457,13 @@ tbody tr:hover td{background:rgba(255,255,255,.015);}
 </div>
 
 <!-- FINOS FDC3 3.0 Desktop Agent (built from fdc3-agent/ on @finos/fdc3-web-impl) -->
-<script src="./fdc3-agent.js?v=11"></script>
+<script src="./fdc3-agent.js?v=12"></script>
 <script type="module">
 import { validatePaymentContext, toSettlementStatusContext, STATUS } from './payment-lifecycle.mjs';
 
 // ─── State ─────────────────────────────────────────────────────────────────
 const BANKERX_ORIGIN = 'https://terminal.synapticchain.xyz';
 let bankerxWin = null;
-// True when the desk window is owned by the FDC3 Desktop Agent (agent.open
-// path): the raise is then the single canonical dispatch channel, and the
-// legacy direct-dispatch fallbacks (which would window.open the cross-origin
-// terminal) must not fire — in the offline acceptance pack there is no
-// terminal behind this origin and the raise already carries full delivery.
-let bankerxAgentOwned = false;
 let receiverAvailable = false;   // FR-01601: gates SETTLE button visibility
 let direction = 'BUY';
 let trades = [];
@@ -534,7 +528,6 @@ window.launchBankerX = async () => {
       await agent.ready;
       const instanceId = await agent.open('bankerx-clearing-desk');
       bankerxWin = null; // ownership transfers to the agent (WCP instance tracking)
-      bankerxAgentOwned = true;
       log('s', `[FDC3] Desktop agent open("bankerx-clearing-desk") → instance ${String(instanceId).slice(0,8)}… (WCP)`);
       setReceiverAvailable(true);
       document.getElementById('launchBtn').classList.add('live');
@@ -599,10 +592,7 @@ setInterval(() => {
 
 // ─── Listen for synaptic.settlementStatus from BankerX (FR-01606) ──────────
 window.addEventListener('message', (evt) => {
-  // Cross-origin: the BankerX terminal (and estate origins). Same-origin: the
-  // pack-served mock receiver of the offline acceptance flow (state 016) may
-  // relay its settlement status home — same trust boundary as the page itself.
-  if (evt.origin !== BANKERX_ORIGIN && !evt.origin.includes('synapticchain.xyz') && evt.origin !== window.location.origin) return;
+  if (evt.origin !== BANKERX_ORIGIN && !evt.origin.includes('synapticchain.xyz')) return;
   const d = evt.data;
   if (!d) return;
   if (d.type === 'synaptic.settlementStatus' || d.traderxSettlementStatus || d.uetr) {
@@ -805,12 +795,23 @@ window.settleTrade = async (id, mode) => {
     return;
   }
 
-  // If the desk window is not FDC3-agent-owned and not tracked, try to
-  // open/focus or fallback gracefully to relay channels (FR-01605 path).
-  if (!bankerxAgentOwned && (!bankerxWin || bankerxWin.closed)) {
+  // If window not tracked, try to open/focus or fallback gracefully to relay
+  if (!bankerxWin || bankerxWin.closed) {
+    // Desk-reuse (2026-10-01, operator directive): ask the DA for the BankerX
+    // window it is tracking BEFORE blind-opening a new tab. The launch button
+    // transfers window ownership to the agent (bankerxWin = null in
+    // launchBankerX), so when a desk is open this returns the real WindowProxy
+    // and the settle path focuses it — the legacy window.open below only runs
+    // when the agent is absent or no desk window exists.
     try {
-      bankerxWin = window.open(BANKERX_ORIGIN, 'bankerx_clearing_desk');
+      const agentWin = await window.SynapticFDC3Agent?.getWindow?.();
+      if (agentWin && !agentWin.closed) bankerxWin = agentWin;
     } catch (e) {}
+    if (!bankerxWin || bankerxWin.closed) {
+      try {
+        bankerxWin = window.open(BANKERX_ORIGIN, 'bankerx_clearing_desk');
+      } catch (e) {}
+    }
   }
 
   // Build canonical fdc3.payment context (FINOS PR #2204 name) per Spec 016 FR-01603 with verified Token-2022 accounts
@@ -863,6 +864,9 @@ window.settleTrade = async (id, mode) => {
       const resolution = await window.SynapticFDC3Agent.raiseIntent('StartPayment', ctx, targetAppId);
       const src = resolution?.source ?? resolution?.intentResolution?.source ?? {};
       log('s', `[FDC3 FR-01602] fdc3.raiseIntent("StartPayment") → resolved to ${src.appId ?? 'bankerx-clearing-desk'}${src.instanceId ? ' · instance ' + String(src.instanceId).slice(0,8) + '…' : ''}`);
+      // Desk-reuse (2026-10-01): SETTLE brings the BankerX clearing desk into
+      // view on every successful raise, not just the adapter/intercept path.
+      try { await window.SynapticFDC3Agent.focusApp?.(targetAppId); } catch (e) {}
       log('s', `[SPEC-016] BankerX ADR-555 enclave pre-flight running — awaiting confirmation`);
       // Direct-path modal state (the adapter path updates via its trace).
       const im = document.getElementById('intentModal');
@@ -1008,7 +1012,8 @@ function renderBlotter() {
 
     let action = '';
     if (t.status === 'EXECUTED' && receiverAvailable) {
-      action = `<button class="settle-btn" onclick="settleTrade(${t.id})">SETTLE (BANKERX)</button>` +
+      action =
+        `<button class="settle-btn" onclick="settleTrade(${t.id})">SETTLE (BANKERX)</button>` +
         `<button class="settle-btn" style="margin-left:4px;border-color:rgba(240,180,41,.45);color:var(--amber);background:rgba(240,180,41,.08)" ` +
         `title="Directory-miss path: raise targeted at a desk NOT in the App Directory — the Alcove ADR-555 enclave screens it, the rendezvous lane routes it to a real partition desk, and the desk re-verifies the enclave attestation before settling" ` +
         `onclick="settleTrade(${t.id},'enclave')">SETTLE (ENCLAVE)</button>`;

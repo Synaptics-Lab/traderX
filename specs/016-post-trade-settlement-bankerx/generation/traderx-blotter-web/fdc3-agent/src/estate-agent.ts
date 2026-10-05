@@ -405,7 +405,23 @@ class EstateServerContext implements ServerContext<AppRegistration> {
     // only the synthesized delivery is enriched.
     const deliveredContext =
       screen.wotsPlus && screen.timestamp
-        ? { ...(context as object), alcove: { lane: screen.lane, timestamp: screen.timestamp, wotsPlus: screen.wotsPlus } }
+        ? {
+            ...(context as object),
+            alcove: {
+              lane: screen.lane,
+              timestamp: screen.timestamp,
+              wotsPlus: screen.wotsPlus,
+              // F-8A: the desk's verify_preflight REFUSES unkeyed attestations
+              // — the Ed25519 signature fields MUST ride with the delivery.
+              ...(screen.signatureHex && screen.publicKeyHex && screen.signedMessageHex
+                ? {
+                    signatureHex: screen.signatureHex,
+                    publicKeyHex: screen.publicKeyHex,
+                    signedMessageHex: screen.signedMessageHex,
+                  }
+                : {}),
+            },
+          }
         : context;
     const synth = {
       type: "raiseIntentRequest",
@@ -435,10 +451,14 @@ class EstateServerContext implements ServerContext<AppRegistration> {
             undefined;
           if (launched) this.focusDeskWindow(launched);
         }
-        const freshReg = this.connections.find(
-          (c) => c.appId === desk && c.state === State.Connected
-        );
-        deliveredInstance = deskReg?.instanceId ?? freshReg?.instanceId ?? null;
+        // instanceId trace record: await the desk's WCP handshake instead of
+        // reading the Connected set too early — the pending-intent machinery
+        // delivers the intent at the desk's addIntentListener, moments after
+        // the cold launch realizes. Without the await, the trace claims
+        // instanceId:null on a delivery that in fact lands.
+        const freshRegInstance = await this.awaitConnectedInstanceForAppId(desk, 10000);
+        deliveredInstance =
+          deskReg?.instanceId ?? (freshRegInstance as string) ?? null;
       }
     } catch (e) {
       console.error("[EstateDA] Enclave-adapter desk delivery failed:", e);
@@ -588,10 +608,14 @@ class EstateServerContext implements ServerContext<AppRegistration> {
             undefined;
           if (launched) this.focusDeskWindow(launched);
         }
-        const freshReg = this.connections.find(
-          (c) => c.appId === desk && c.state === State.Connected
-        );
-        deliveredInstance = deskReg?.instanceId ?? freshReg?.instanceId ?? null;
+        // instanceId trace record: await the desk's WCP handshake instead of
+        // reading the Connected set too early — the pending-intent machinery
+        // delivers the intent at the desk's addIntentListener, moments after
+        // the cold launch realizes. Without the await, the trace claims
+        // instanceId:null on a delivery that in fact lands.
+        const freshRegInstance = await this.awaitConnectedInstanceForAppId(desk, 10000);
+        deliveredInstance =
+          deskReg?.instanceId ?? (freshRegInstance as string) ?? null;
       }
     } catch (e) {
       console.error("[EstateDA] Enclave-adapter desk delivery failed:", e);
@@ -628,10 +652,15 @@ class EstateServerContext implements ServerContext<AppRegistration> {
     reason: string;
     lane: number | null;
     latencyMs: number | null;
-    /** WOTS+ proof + derivation timestamp from the report, for the desk-side
-     * attestation verification (S3). Present only on PASS. */
+    /** WOTS+ proof + derivation timestamp + KEYED Ed25519 signature fields
+     *  from the report, for the desk-side attestation verification (S3, F-8A).
+     *  Present only on PASS. The desk's verify_preflight requires the full
+     *  keyed shape — the three signature fields MUST ride along. */
     wotsPlus?: Record<string, unknown>;
     timestamp?: string;
+    signatureHex?: string;
+    publicKeyHex?: string;
+    signedMessageHex?: string;
   }> {
     const url =
       (this.directory.retrieveAppsById(ADAPTER_APP_ID)[0]?.details as { url?: string } | undefined)
@@ -684,6 +713,9 @@ class EstateServerContext implements ServerContext<AppRegistration> {
         attestation?: {
           timestamp?: string;
           wotsPlus?: Record<string, unknown>;
+          ed25519SignatureSample?: string;
+          ed25519PublicKeyHex?: string;
+          signedMessageHex?: string;
         };
       };
       const passed = report.passed === true;
@@ -694,6 +726,9 @@ class EstateServerContext implements ServerContext<AppRegistration> {
         latencyMs: report.totalLatencyMs ?? null,
         wotsPlus: report.attestation?.wotsPlus,
         timestamp: report.attestation?.timestamp,
+        signatureHex: report.attestation?.ed25519SignatureSample,
+        publicKeyHex: report.attestation?.ed25519PublicKeyHex,
+        signedMessageHex: report.attestation?.signedMessageHex,
       };
     } catch (e) {
       return fail(`EnclaveUnreachable:${(e as Error)?.message ?? e}`);

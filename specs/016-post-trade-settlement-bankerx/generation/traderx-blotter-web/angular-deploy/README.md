@@ -6,14 +6,14 @@ not part of the Angular build; the canonical app bundle (`main-*.js`) is
 built from `templates/web-front-end/angular/` — see `PATCH-NOTE.md` for the
 2026-09-30 rebuild recipe that made the bundle fully source-derived.
 
-| file | served as | 2026-10-01 (v20 durable settlement ledger) md5 | 2026-10-01 (v19 UETR-in-STATE + agent ?v=19) md5 |
+| file | served as | 2026-10-05 (agent v20 — F-8A keyed-attestation plumbing) md5 | 2026-10-01 (v20 durable settlement ledger) md5 |
 |------|-----------|----------------|----------------|
-| `bankerx-bridge.js` | `bankerx-bridge.js?v=13` | 35eb71880e4ff6186f2fc619f51764c2 (unchanged) | 35eb71880e4ff6186f2fc619f51764c2 |
-| agent (DEPLOYED copy) | `fdc3-agent.js?v=19` (both trees) | dcfc8cb4257029c0d5cd46eb753bda00 (v19 desk-reuse — unchanged) | dcfc8cb4257029c0d5cd46eb753bda00 |
-| `conf.angular.html` | `conf.html` | 25da0a4bbf0ddbc18b341ca82c722676 (unchanged) | 25da0a4bbf0ddbc18b341ca82c722676 |
+| `bankerx-bridge.js` | `bankerx-bridge.js?v=13` | 35eb71880e4ff6186f2fc619f51764c2 (unchanged) | 35eb71880e4ff6186f2fc619f51764c2 (unchanged) |
+| agent (DEPLOYED copy) | `fdc3-agent.js?v=12` (root) / `fdc3-agent.js?v=20` (angular) | bdc3a82b5e11fdff2aa09bfc7c1f9207 (v20 F-8A keyed-attestation plumbing + awaited instanceId trace) | dcfc8cb4257029c0d5cd46eb753bda00 (v19 desk-reuse) |
+| `conf.angular.html` | `conf.html` | 25da0a4bbf0ddbc18b341ca82c722676 (unchanged) | 25da0a4bbf0ddbc18b341ca82c722676 (unchanged) |
 | (app bundle) | `main-FDMPPVWA.js?v=20` | ca10adb401a324240e3d618822fccc88 | (v19 `main-7E7PBSO6.js` `add329e9…` retired same day) |
-| (app index + glue tags) | `index.html` | 5143aad4ba93282c0a3bfba4e26ee6ab (bundle ref `?v=20`) | 3f2a5043710ee622368cd99979c82443 (bundle ref `?v=19`) |
-| (root estate index, agent ref `?v=19`) | `/index.html` | 35c80fd57daf96a14127e3c652b99071 | 35c80fd57daf96a14127e3c652b99071 |
+| (app index + glue tags, agent ref `?v=20`) | `index.html` | 76e6662e1cd5957ac5121bbf89effd15 (deployed 2026-10-05) | 5143aad4ba93282c0a3bfba4e26ee6ab (bundle ref `?v=20`, pre-agent-bump) |
+| (root estate index, agent ref `?v=12`, deployed-variant record incl. `bankerxAgentOwned` desk-reuse guard) | `/index.html` | b2e50f92f28236661f864a2496182848 | 35c80fd57daf96a14127e3c652b99071 |
 
 
 v20 (2026-10-01, commit `b5cc268`): durable settlement ledger — the adapter
